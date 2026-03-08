@@ -1,0 +1,43 @@
+===========================================
+部品カテゴリ分類アプリ - 起動方法
+===========================================
+
+【方法1】Windowsコマンドプロンプト（推奨）
+-------------------------------------------
+1. Windowsキー + R を押す
+2. 「cmd」と入力してEnter
+3. 以下のコマンドを実行：
+
+   cd C:\Users\itona\Desktop\parts-category-app
+   python -m pip install -r requirements.txt
+   streamlit run app.py
+
+【方法2】PowerShell
+-------------------------------------------
+1. Windowsキー + X を押す
+2. 「Windows PowerShell」を選択
+3. 以下のコマンドを実行：
+
+   cd C:\Users\itona\Desktop\parts-category-app
+   python -m pip install -r requirements.txt
+   streamlit run app.py
+
+【方法3】Cursorの統合ターミナル
+-------------------------------------------
+1. Cursorで Ctrl + ` (バッククォート) を押してターミナルを開く
+2. ターミナルの種類を「Command Prompt」または「PowerShell」に変更
+3. 以下のコマンドを実行：
+
+   cd C:\Users\itona\Desktop\parts-category-app
+   python -m pip install -r requirements.txt
+   streamlit run app.py
+
+【注意】
+-------------------------------------------
+- Git Bashでは「pip」コマンドが直接使えない場合があります
+- その場合は「python -m pip」を使用してください
+- Pythonがインストールされていない場合は、以下からインストール：
+  https://www.python.org/downloads/
+
+起動後、ブラウザで http://localhost:8501 が自動的に開きます。
+
