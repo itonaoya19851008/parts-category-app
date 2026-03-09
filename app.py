@@ -412,7 +412,7 @@ def classify_part(parts_data: pd.DataFrame) -> Tuple[Optional[str], str]:
     if summary_col:
         summary = str(header_row.get(summary_col, '') or '').strip()
         if 'MS-' in summary.upper() or 'JIS' in summary.upper():
-            return (None, f'SUMMARYにMS-またはJISを含む（{summary}）（定義対象外）')
+            return ('d', f'SUMMARYにMS-またはJISを含む（{summary}）（定義対象外）')
     
     # 2. SUPPLY欄に「ES, SU, ST, CS」を含むか？
     has_supply = False
@@ -421,71 +421,76 @@ def classify_part(parts_data: pd.DataFrame) -> Tuple[Optional[str], str]:
         has_supply = True
     
     if has_supply:
-        # 3. NAME OF PARTSに「Roll」または「Roller」を含むか？
+        # 3. NAME OF PARTSに「Roll/Roller」を含み、かつ「BRG/Bearing」を含まないか？
         part_name = str(header_row.get(name_col, '') or '') if name_col else ''
-        has_roll = 'ROLL' in part_name.upper() or 'ROLLER' in part_name.upper()
+        has_roll    = 'ROLL' in part_name.upper() or 'ROLLER' in part_name.upper()
+        has_bearing = 'BRG'  in part_name.upper() or 'BEARING' in part_name.upper()
         
-        if has_roll:
-            # 4. NAME OF PARTSに「BRG」または「Bearing」を含むか？
-            has_bearing = 'BRG' in part_name.upper() or 'BEARING' in part_name.upper()
-            
-            if not has_bearing:
-                # 5. SUPPLY付きRoll/Roller: 部品単品重量が3000kg以上か？
-                if parts_weight >= 3000:
-                    return ('Ds', f'SUPPLY条件あり、Roll/Rollerあり、重量{parts_weight:.1f}kg（3000kg以上）')
+        if has_roll and not has_bearing:
+            # Roll/Roller（BRGなし）→ ステップ5以降の重量・材質判定へそのまま流す
+            pass
         else:
-            # 4→ Roll/Rollerなし: 定義対象外
-            return (None, f'SUPPLY条件あり（{supply_val}）だがRoll/Rollerなし（定義対象外）')
+            # Roll以外、またはBRG/Bearingあり → 定義対象外
+            return ('d', 'SUPPLY条件あり、Roll/Roller以外（またはBRG）のため対象外')
     
-    # 5. 部品単品重量が3000kg以上か？（全部品共通）
+    # 3. 超大物: 総重量が3000kg以上か？
     if parts_weight >= 3000:
         return ('Ds', f'重量{parts_weight:.1f}kg（3000kg以上）')
     
-    # 6. MATERIALにSPCC/SPHC/SS*を含むか？
-    # → PIECE=00の材質（部品本体の材質）で判定
-    part_material = str(header_row.get(material_col, '') or '') if material_col else ''
-    has_spcc_sphc_ss = check_material_pattern(part_material, ['SPCC', 'SPHC', 'SS*'])
+    # 4. 材質分岐: グループ全体（全PIECE）にSPCC/SPHC/SS*が1つでも含まれるか？
+    has_spcc_sphc_ss = False
+    if material_col:
+        for _, row in parts_data.iterrows():
+            mat = str(row.get(material_col, '') or '')
+            if check_material_pattern(mat, ['SPCC', 'SPHC', 'SS*']):
+                has_spcc_sphc_ss = True
+                break
     
     if has_spcc_sphc_ss:
-        # 構成部材（PIECE≠00）に「SS*以外の材質」で重量300kg以上のものがあるか？
+        # ── YESルート ──
+        # ③ 構成部材にSS系以外の材質があり、その構成単品の重量が300kg以上か？
         for _, row in sub_pieces.iterrows():
             mat = str(row.get(material_col, '') or '') if material_col else ''
             if mat and not check_material_pattern(mat, ['SPCC', 'SPHC', 'SS*']):
                 pm = parse_weight(row[mass_col]) if mass_col else 0
                 if pm >= 300:
-                    return ('Ds', f'本体材質にSPCC/SPHC/SS*含む、構成部材（{mat}）{pm:.1f}kg≥300kg')
-        # 条件非該当 → 7へ
+                    return ('Ds', f'SS系だが異材質の単品300kg以上あり（{mat}）{pm:.1f}kg')
+        # 該当なし → ⑦へ合流
+    
     else:
-        # 部品単品重量が400kg以上か？
+        # ── NOルート ──
+        # ⑤ 部品(PARTS)の総重量が400kg以上か？
         if parts_weight >= 400:
-            return ('Ds', f'本体材質にSS*なし、重量{parts_weight:.1f}kg（400kg以上）')
+            return ('Ds', f'SS系を含まず総重量{parts_weight:.1f}kg≥400kg')
         
-        # 構成部材にSCM*/SF*を含み、かつ部品重量300kg以上か？
+        # ⑥ 構成部材にSCM*/SF*を含み、かつ部品(PARTS)の総重量が300kg以上か？
         has_scm_sf = False
         for _, row in parts_data.iterrows():
             mat = str(row.get(material_col, '') or '') if material_col else ''
             if check_material_pattern(mat, ['SCM*', 'SF*']):
                 has_scm_sf = True
                 break
-        
         if has_scm_sf and parts_weight >= 300:
-            return ('Ds', f'構成部材にSCM*/SF*含む、重量{parts_weight:.1f}kg≥300kg')
+            return ('Ds', f'SCM/SFを含み総重量{parts_weight:.1f}kg≥300kg')
+        # 該当なし → ⑦へ合流
     
-    # 7. 構成部材（PIECE≠00）にSPCC/SPHC/SS*以外の材質で重量100kg以上のものがあるか？
+    # ── ⑦: YES/NOルート合流地点 ──
+    # 構成部材にSS系以外の材質があり、その構成単品の重量が100kg以上か？
     for _, row in sub_pieces.iterrows():
         mat = str(row.get(material_col, '') or '') if material_col else ''
         if mat and not check_material_pattern(mat, ['SPCC', 'SPHC', 'SS*']):
             pm = parse_weight(row[mass_col]) if mass_col else 0
             if pm >= 100:
-                return ('Dm', f'構成部材（{mat}）{pm:.1f}kg≥100kg（SS*以外重量品）')
-    # PIECE=00単体部品の場合も判定
+                return ('Dm', f'異材質の単品100kg以上あり（{mat}）{pm:.1f}kg')
+    # PIECE=00単体部品（子部品なし）の場合も判定
     if sub_pieces.empty and material_col:
         mat = str(header_row.get(material_col, '') or '')
         if mat and not check_material_pattern(mat, ['SPCC', 'SPHC', 'SS*']):
             if parts_weight >= 100:
-                return ('Dm', f'材質（{mat}）重量{parts_weight:.1f}kg≥100kg（SS*以外）')
+                return ('Dm', f'異材質（{mat}）単品{parts_weight:.1f}kg≥100kg')
+    # ⑦も該当なし → 次のステップ（極厚板t80）へ
     
-    # 8. 構成部材のSIZEに80mm厚以上（t80以上）があるか？
+    # 5. 極厚板: SIZEにt80以上があり、かつ総重量300kg以上か？
     if size_col:
         for _, row in parts_data.iterrows():
             size = row.get(size_col, None)
@@ -497,22 +502,22 @@ def classify_part(parts_data: pd.DataFrame) -> Tuple[Optional[str], str]:
                         return ('Ds', f'構成部材にt80以上、重量{pm:.1f}kg≥300kg')
                 break  # t80以上あるが300kg未満 → 9へ
     
-    # 9. 部品単品重量が500kg以上か？
+    # 6. 大物: 総重量が500kg以上か？
     if parts_weight >= 500:
         return ('Dm', f'重量{parts_weight:.1f}kg（500kg以上）')
     
-    # 10. PARTSまたはPIECEの名称に「PIPE」または「PIPING」があるか？
+    # 7. 配管: 名称に「PIPE」または「PIPING」を含むか？
     if name_col:
         for _, row in parts_data.iterrows():
             nm = str(row.get(name_col, '') or '').upper()
             if 'PIPE' in nm or 'PIPING' in nm:
                 return ('PD', f'名称にPIPE/PIPINGを含む（{row.get(name_col,"")}）')
     
-    # 11. 部品単品重量が50kg未満か？
+    # 8. 軽量品: 総重量が50kg未満か？
     if parts_weight < 50:
         return ('PD', f'重量{parts_weight:.1f}kg（50kg未満）')
     
-    # 12. ここまで該当しなかった → 残部品（後で按分処理）
+    # 9. 残部品 → 後で按分処理（前半50%=Dm、後半50%=De）
     return (None, f'該当条件なし（残部品）重量{parts_weight:.1f}kg')
 
 def classify_all_parts(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -566,11 +571,9 @@ def classify_all_parts(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     df_classified['Category'] = cls_df['Category']
     df_classified['判定理由'] = cls_df['判定理由']
     
-    # 「定義対象外」(None)の部品を残部品として按分処理
-    # ※ 残部品 = 分類ロジック1〜11をすべて通過したが最終判定なし OR MS-/JIS除外品
-    #   MS-/JIS品はNoneのままにし、残部品のみDm/Deに按分
-    remaining_mask = (df_classified['Category'].isna()) & \
-                     (~df_classified['判定理由'].str.contains('定義対象外', na=False))
+    # 残部品（Category=None）のみを按分処理（ステップ12に到達した部品）
+    # ※ 'd'カテゴリ（定義対象外：MS-/JIS品、Roll/Rollerなし）は按分対象外
+    remaining_mask = df_classified['Category'].isna()
     
     if remaining_mask.sum() > 0:
         # SERIAL×PARTSのユニークグループで按分
@@ -881,7 +884,7 @@ for key, default in [('detail_df', None), ('summary_df', None),
         st.session_state[key] = default
 
 # ── タブ構成 ───────────────────────────────────────────────────────────────
-tab_main, tab_history = st.tabs(["📂 分類・集計", "🕒 過去の集計履歴"])
+tab_main, tab_history, tab_flow = st.tabs(["📂 分類・集計", "🕒 過去の集計履歴", "📊 判定フローチャート"])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1: 分類・集計
@@ -1074,4 +1077,121 @@ with tab_history:
                 file_name=f"集計履歴_{base_name}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 3: 判定フローチャート
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_flow:
+    st.subheader("📊 部品分類 判定フローチャート")
+    st.caption("classify_part 関数の判定ロジック（ステップ 1〜9）")
+
+    FLOWCHART_HTML = """
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body { font-family:'Segoe UI','Hiragino Sans',sans-serif; background:#fff; margin:0; padding:12px; }
+    .legend { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+    .legend-item { display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; }
+    .legend-box { width:18px; height:13px; border-radius:2px; border:1px solid rgba(0,0,0,.15); }
+  </style>
+</head>
+<body>
+<div class="legend">
+  <div class="legend-item"><div class="legend-box" style="background:#fde68a"></div>d（定義対象外）</div>
+  <div class="legend-item"><div class="legend-box" style="background:#fca5a5"></div>Ds（設計重量品）</div>
+  <div class="legend-item"><div class="legend-box" style="background:#fdba74"></div>Dm（製作重量品）</div>
+  <div class="legend-item"><div class="legend-box" style="background:#86efac"></div>De（残部品後半50%）</div>
+  <div class="legend-item"><div class="legend-box" style="background:#93c5fd"></div>PD（配管・軽量）</div>
+</div>
+<div class="mermaid">
+flowchart TD
+    START([部品グループ SERIAL x PARTS]):::start
+
+    S1{"1 SUMMARY に<br/>MS- または JIS を含む?"}
+    R1([d: 規格品・小物]):::cat_d
+
+    S2{"2 SUPPLY に<br/>ES / SU / ST / CS を含む?"}
+    S2b{"NAME に ROLL/ROLLER あり<br/>かつ BRG/BEARING なし?"}
+    R2([d: 支給品のため対象外]):::cat_d
+
+    S3{"3 総重量 >= 3000 kg?"}
+    R3([Ds: 超大物 3000kg以上]):::cat_ds
+
+    S4{"4 グループ全体に<br/>SPCC / SPHC / SS系<br/>が1つでも含まれる?"}
+
+    S4y{"4-YES 構成単品に<br/>SS系以外の材質があり<br/>単品重量 >= 300 kg?"}
+    R4y([Ds: SS系+異材質単品300kg以上]):::cat_ds
+
+    S4n5{"4-NO 部品総重量<br/>>= 400 kg?"}
+    R4n5([Ds: SS系なし+総重量400kg以上]):::cat_ds
+    S4n6{"4-NO SCM* / SF* があり<br/>かつ 総重量 >= 300 kg?"}
+    R4n6([Ds: SCM/SF+総重量300kg以上]):::cat_ds
+
+    S7{"7 合流: 構成単品に<br/>SS系以外の材質があり<br/>単品重量 >= 100 kg?"}
+    R7([Dm: 異材質単品100kg以上]):::cat_dm
+
+    S5{"5 SIZE に t80以上 があり<br/>かつ 総重量 >= 300 kg?"}
+    R5([Ds: 極厚板+300kg以上]):::cat_ds
+
+    S6{"6 総重量 >= 500 kg?"}
+    R6([Dm: 大物 500kg以上]):::cat_dm
+
+    S8{"7 NAME に<br/>PIPE / PIPING を含む?"}
+    R8([PD: 配管部品]):::cat_pd
+
+    S9{"8 総重量 < 50 kg?"}
+    R9([PD: 軽量品]):::cat_pd
+
+    S10([9 残部品: 前半50% Dm / 後半50% De]):::cat_de
+
+    START --> S1
+    S1 -- YES --> R1
+    S1 -- NO --> S2
+    S2 -- NO --> S3
+    S2 -- YES --> S2b
+    S2b -- "ROLL/ROLLER かつ BRGなし" --> S3
+    S2b -- "それ以外" --> R2
+    S3 -- YES --> R3
+    S3 -- NO --> S4
+    S4 -- YES --> S4y
+    S4 -- NO --> S4n5
+    S4y -- YES --> R4y
+    S4y -- NO --> S7
+    S4n5 -- YES --> R4n5
+    S4n5 -- NO --> S4n6
+    S4n6 -- YES --> R4n6
+    S4n6 -- NO --> S7
+    S7 -- YES --> R7
+    S7 -- NO --> S5
+    S5 -- YES --> R5
+    S5 -- NO --> S6
+    S6 -- YES --> R6
+    S6 -- NO --> S8
+    S8 -- YES --> R8
+    S8 -- NO --> S9
+    S9 -- YES --> R9
+    S9 -- NO --> S10
+
+    classDef start  fill:#1e293b,stroke:#1e293b,color:#fff
+    classDef cat_d  fill:#fde68a,stroke:#d97706,color:#78350f,font-weight:bold
+    classDef cat_ds fill:#fca5a5,stroke:#dc2626,color:#7f1d1d,font-weight:bold
+    classDef cat_dm fill:#fdba74,stroke:#ea580c,color:#7c2d12,font-weight:bold
+    classDef cat_de fill:#86efac,stroke:#16a34a,color:#14532d,font-weight:bold
+    classDef cat_pd fill:#93c5fd,stroke:#2563eb,color:#1e3a8a,font-weight:bold
+</div>
+<script>
+  mermaid.initialize({
+    startOnLoad:true, theme:'base',
+    themeVariables:{ fontSize:'13px' },
+    flowchart:{ curve:'basis', nodeSpacing:36, rankSpacing:46, useMaxWidth:false }
+  });
+</script>
+</body>
+</html>
+"""
+    import streamlit.components.v1 as components
+    components.html(FLOWCHART_HTML, height=1100, scrolling=True)
 

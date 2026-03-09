@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>BOM分類ロジック フローチャート</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', 'Hiragino Sans', sans-serif;
+      background: #f0f4f8;
+      padding: 24px;
+    }
+    h1 {
+      text-align: center;
+      font-size: 1.35rem;
+      color: #1e293b;
+      margin-bottom: 6px;
+    }
+    .subtitle {
+      text-align: center;
+      font-size: 0.82rem;
+      color: #64748b;
+      margin-bottom: 20px;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.82rem;
+      color: #334155;
+    }
+    .legend-box {
+      width: 22px;
+      height: 16px;
+      border-radius: 3px;
+      border: 1px solid rgba(0,0,0,0.15);
+    }
+    .chart-wrap {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.07);
+      padding: 32px 16px;
+      overflow-x: auto;
+    }
+    .mermaid { display: flex; justify-content: center; }
+  </style>
+</head>
+<body>
+
+<h1>BOM 部品分類ロジック フローチャート</h1>
+<p class="subtitle">classify_part 関数 | 判定ステップ 1 〜 9</p>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-box" style="background:#fde68a"></div>d（定義対象外）</div>
+  <div class="legend-item"><div class="legend-box" style="background:#fca5a5"></div>Ds（設計重量品）</div>
+  <div class="legend-item"><div class="legend-box" style="background:#fdba74"></div>Dm（製作重量品）</div>
+  <div class="legend-item"><div class="legend-box" style="background:#86efac"></div>De（残部品後半50%）</div>
+  <div class="legend-item"><div class="legend-box" style="background:#93c5fd"></div>PD（配管・軽量）</div>
+</div>
+
+<div class="chart-wrap">
+<div class="mermaid">
+flowchart TD
+    START([部品グループ SERIAL x PARTS]):::start
+
+    S1{"1 SUMMARY に<br/>MS- または JIS を含む?"}
+    R1([d: 規格品・小物]):::cat_d
+
+    S2{"2 SUPPLY に<br/>ES / SU / ST / CS を含む?"}
+    S2b{"NAME に ROLL / ROLLER あり<br/>かつ BRG / BEARING なし?"}
+    R2([d: 支給品のため対象外]):::cat_d
+
+    S3{"3 総重量 >= 3000 kg?"}
+    R3([Ds: 超大物 3000kg以上]):::cat_ds
+
+    S4{"4 グループ全体に<br/>SPCC / SPHC / SS系<br/>が1つでも含まれる?"}
+
+    S4y{"4-YES 構成単品に<br/>SS系以外の材質があり<br/>単品重量 >= 300 kg?"}
+    R4y([Ds: SS系+異材質単品300kg以上]):::cat_ds
+
+    S4n5{"4-NO 部品総重量<br/>>= 400 kg?"}
+    R4n5([Ds: SS系なし+総重量400kg以上]):::cat_ds
+    S4n6{"4-NO SCM* / SF* があり<br/>かつ 総重量 >= 300 kg?"}
+    R4n6([Ds: SCM/SF+総重量300kg以上]):::cat_ds
+
+    S7{"7 合流: 構成単品に<br/>SS系以外の材質があり<br/>単品重量 >= 100 kg?"}
+    R7([Dm: 異材質単品100kg以上]):::cat_dm
+
+    S5{"5 SIZE に t80以上 があり<br/>かつ 総重量 >= 300 kg?"}
+    R5([Ds: 極厚板+300kg以上]):::cat_ds
+
+    S6{"6 総重量 >= 500 kg?"}
+    R6([Dm: 大物 500kg以上]):::cat_dm
+
+    S8{"7 NAME に<br/>PIPE / PIPING を含む?"}
+    R8([PD: 配管部品]):::cat_pd
+
+    S9{"8 総重量 < 50 kg?"}
+    R9([PD: 軽量品]):::cat_pd
+
+    S10([9 残部品: 前半50% Dm / 後半50% De]):::cat_de
+
+    START --> S1
+    S1 -- YES --> R1
+    S1 -- NO --> S2
+
+    S2 -- NO --> S3
+    S2 -- YES --> S2b
+    S2b -- "ROLL/ROLLER かつ BRGなし" --> S3
+    S2b -- "それ以外" --> R2
+
+    S3 -- YES --> R3
+    S3 -- NO --> S4
+
+    S4 -- YES --> S4y
+    S4 -- NO --> S4n5
+
+    S4y -- YES --> R4y
+    S4y -- NO --> S7
+
+    S4n5 -- YES --> R4n5
+    S4n5 -- NO --> S4n6
+    S4n6 -- YES --> R4n6
+    S4n6 -- NO --> S7
+
+    S7 -- YES --> R7
+    S7 -- NO --> S5
+
+    S5 -- YES --> R5
+    S5 -- NO --> S6
+
+    S6 -- YES --> R6
+    S6 -- NO --> S8
+
+    S8 -- YES --> R8
+    S8 -- NO --> S9
+
+    S9 -- YES --> R9
+    S9 -- NO --> S10
+
+    classDef start  fill:#1e293b,stroke:#1e293b,color:#fff
+    classDef cat_d  fill:#fde68a,stroke:#d97706,color:#78350f,font-weight:bold
+    classDef cat_ds fill:#fca5a5,stroke:#dc2626,color:#7f1d1d,font-weight:bold
+    classDef cat_dm fill:#fdba74,stroke:#ea580c,color:#7c2d12,font-weight:bold
+    classDef cat_de fill:#86efac,stroke:#16a34a,color:#14532d,font-weight:bold
+    classDef cat_pd fill:#93c5fd,stroke:#2563eb,color:#1e3a8a,font-weight:bold
+</div>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      fontSize: '13px',
+      fontFamily: "'Segoe UI', 'Hiragino Sans', sans-serif"
+    },
+    flowchart: {
+      curve: 'basis',
+      nodeSpacing: 38,
+      rankSpacing: 48,
+      useMaxWidth: false
+    }
+  });
+</script>
+</body>
+</html>
